@@ -69,6 +69,64 @@ Architecture
     |     |    | analysis|        | (pure xform)|
     +-----+    +---------+        +-------------+
 
+The same architecture, rendered as a Mermaid flowchart (visible when this README is viewed on GitHub):
+
+```mermaid
+flowchart LR
+    User[User<br/>terminal]
+    Agent[agent.py]
+    LLM[qwen2.5:7b<br/>Ollama, local]
+    SONiC[SONiC VS<br/>Docker]
+    Batfish[Batfish<br/>parser analysis]
+    SnapBuilder[snapshot_builder<br/>pure transform]
+
+    User -->|natural language| Agent
+    Agent <-->|tool calls| LLM
+    Agent -->|read or write| SONiC
+    Agent -->|candidate state| SnapBuilder
+    SnapBuilder -->|snapshot| Batfish
+    Batfish -->|verification result| Agent
+    Agent -->|answer or diff| User
+```
+
+The write path as a sequence diagram, showing the order of operations in the propose-verify-approve-apply-verify chain:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Agent as agent.py
+    participant LLM
+    participant Snap as snapshot_builder
+    participant BF as Batfish
+    participant SVS as SONiC VS
+
+    User->>Agent: Configure Ethernet12 with IP 192.168.1.1/24
+    Agent->>LLM: prompt + tool schemas
+    LLM-->>Agent: propose_add_interface_ip(...)
+    Agent->>Agent: build ChangePlan
+    Agent->>SVS: read current CONFIG_DB
+    SVS-->>Agent: current state
+    Agent->>Snap: build candidate snapshot
+    Snap-->>Agent: snapshot files
+    Agent->>BF: init snapshot, get issues
+    BF-->>Agent: verification result
+    Agent->>User: render diff + verification
+    User->>Agent: approve (y) or reject (n)
+
+    alt approved
+        Agent->>SVS: apply via config CLI
+        Agent->>SVS: poll CONFIG_DB until settled
+        SVS-->>Agent: new state
+        Agent->>Agent: check predictions match
+        Agent->>BF: post-apply re-read
+        BF-->>Agent: parser invariants ok
+        Agent->>User: Change applied. Verification: ok
+    else rejected
+        Agent->>User: Change rejected. No modifications made.
+    end
+```
+
 Read path: agent calls SONiC client tools, returns answers as plain text.
 
 Write path: agent calls a propose tool, which constructs a ChangePlan.
